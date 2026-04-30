@@ -3,93 +3,96 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Escáner Pro: QR + Texto</title>
-    <!-- Librerías para QR, OCR y Excel -->
+    <title>Escáner QR con Validación de Duplicados</title>
     <script src="https://unpkg.com/html5-qrcode"></script>
-    <script src="https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/tesseract.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
     <style>
-        body { font-family: 'Segoe UI', sans-serif; display: flex; flex-direction: column; align-items: center; padding: 20px; background: #eceff1; color: #333; }
-        #reader { width: 100%; max-width: 500px; border-radius: 12px; overflow: hidden; box-shadow: 0 8px 20px rgba(0,0,0,0.15); background: white; }
-        .controls { margin-top: 20px; display: flex; gap: 10px; }
-        button { padding: 12px 24px; border: none; border-radius: 8px; cursor: pointer; font-weight: bold; transition: 0.3s; }
-        .btn-excel { background: #1b5e20; color: white; }
-        .btn-excel:hover { background: #2e7d32; }
-        #results { margin-top: 20px; width: 100%; max-width: 500px; background: white; padding: 20px; border-radius: 12px; box-shadow: 0 4px 10px rgba(0,0,0,0.05); }
-        .data-row { border-bottom: 1px solid #eee; padding: 8px 0; font-size: 0.9em; }
-        .qr-success { color: #2e7d32; font-weight: bold; }
+        body { font-family: 'Segoe UI', Tahoma, sans-serif; background: #f8f9fa; display: flex; flex-direction: column; align-items: center; padding: 20px; margin: 0; }
+        h2 { color: #202124; margin-bottom: 15px; font-size: 1.4rem; text-align: center; }
+        #reader { width: 100%; max-width: 400px; border-radius: 12px; overflow: hidden; box-shadow: 0 4px 12px rgba(0,0,0,0.1); background: white; }
+        .controls { margin: 20px 0; width: 100%; max-width: 400px; display: flex; flex-direction: column; gap: 10px; }
+        button { background: #1a73e8; color: white; border: none; padding: 14px; border-radius: 8px; font-weight: bold; cursor: pointer; font-size: 1rem; width: 100%; }
+        button.btn-excel { background: #1e7e34; }
+        #log { width: 100%; max-width: 400px; background: white; border-radius: 10px; padding: 10px; box-shadow: inset 0 2px 4px rgba(0,0,0,0.05); max-height: 250px; overflow-y: auto; }
+        .row { border-bottom: 1px solid #f1f1f1; padding: 10px; font-size: 0.85rem; display: flex; justify-content: space-between; }
+        .duplicate { color: #d93025; font-weight: bold; }
     </style>
 </head>
 <body>
 
-    <h2>Escáner de Obra (QR & Texto)</h2>
+    <h2>Control de Acceso QR</h2>
     
-    <!-- Contenedor de la cámara -->
     <div id="reader"></div>
 
     <div class="controls">
-        <button class="btn-excel" onclick="exportToExcel()">Descargar reporte Excel</button>
+        <button class="btn-excel" onclick="exportToExcel()">Descargar Excel (.xlsx)</button>
+        <button style="background: #6c757d;" onclick="location.reload()">Limpiar Sesión / Nueva Lista</button>
     </div>
 
-    <div id="results">
-        <strong>Registros capturados:</strong>
-        <div id="log"></div>
+    <div id="log">
+        <div style="font-weight: bold; padding: 5px; color: #5f6368;">Registros realizados:</div>
     </div>
 
     <script>
         let capturedData = [];
+        let isProcessing = false; // Bloqueo para que no salgan mil ventanas de confirmación
         const html5QrCode = new Html5Qrcode("reader");
-        const logDiv = document.getElementById('log');
 
-        const config = { fps: 10, qrbox: { width: 250, height: 250 } };
+        const onScanSuccess = (decodedText) => {
+            if (isProcessing) return; // Si hay una confirmación abierta, no hacer nada
 
-        // Función cuando detecta un QR con éxito
-        const onScanSuccess = (decodedText, decodedResult) => {
-            console.log(`Código detectado: ${decodedText}`);
-            
-            // Evitar duplicados rápidos
-            const ultimoRegistro = capturedData[capturedData.length - 1];
-            if (ultimoRegistro && ultimoRegistro.Contenido === decodedText) return;
+            // 1. Verificar si el contenido YA existe en el array
+            const yaExiste = capturedData.some(item => item.Contenido === decodedText);
 
-            const nuevoDato = {
-                Fecha: new Date().toLocaleString(),
-                Tipo: "Código QR",
+            if (yaExiste) {
+                isProcessing = true;
+                // 2. Solicitar autorización manual
+                const autorizar = confirm(`ESTA CREDENCIAL YA FUE REGISTRADA:\n\n"${decodedText}"\n\n¿Deseas registrarla de nuevo?`);
+                
+                if (!autorizar) {
+                    isProcessing = false;
+                    return; // Si el usuario cancela, no se guarda nada
+                }
+            }
+
+            // 3. Registrar la información
+            const ahora = new Date();
+            const nuevoRegistro = {
+                Hora: ahora.toLocaleTimeString(),
+                Fecha: ahora.toLocaleDateString(),
                 Contenido: decodedText
             };
 
-            capturedData.push(nuevoDato);
-            actualizarInterfaz(nuevoDato);
+            capturedData.unshift(nuevoRegistro);
+            agregarALog(nuevoRegistro);
             
-            // Vibración breve para avisar que leyó
             if (navigator.vibrate) navigator.vibrate(100);
+            
+            // Pequeña pausa para evitar lecturas accidentales inmediatas
+            isProcessing = true;
+            setTimeout(() => { isProcessing = false; }, 2000);
         };
 
-        function actualizarInterfaz(dato) {
-            const row = document.createElement('div');
-            row.className = 'data-row';
-            row.innerHTML = `<span class="qr-success">[QR]</span> ${dato.Fecha}: ${dato.Contenido}`;
-            logDiv.prepend(row);
+        function agregarALog(dato) {
+            const logDiv = document.getElementById('log');
+            const item = document.createElement('div');
+            item.className = 'row';
+            item.innerHTML = `<span>${dato.Contenido}</span><span style="color:#888">${dato.Hora}</span>`;
+            logDiv.insertBefore(item, logDiv.children[1]);
         }
 
-        // Iniciar la cámara trasera
         html5QrCode.start(
             { facingMode: "environment" }, 
-            config, 
+            { fps: 15, qrbox: { width: 250, height: 250 } }, 
             onScanSuccess
-        ).catch(err => {
-            console.error("Error al iniciar cámara", err);
-        });
+        );
 
-        // Exportar a Excel
         function exportToExcel() {
-            if (capturedData.length === 0) {
-                alert("Primero escanea algunos códigos");
-                return;
-            }
-            const worksheet = XLSX.utils.json_to_sheet(capturedData);
-            const workbook = XLSX.utils.book_new();
-            XLSX.utils.book_append_sheet(workbook, worksheet, "Escaneos");
-            XLSX.writeFile(workbook, "Reporte_Credenciales.xlsx");
+            if (capturedData.length === 0) return alert("No hay datos.");
+            const ws = XLSX.utils.json_to_sheet(capturedData);
+            const wb = XLSX.utils.book_new();
+            XLSX.utils.book_append_sheet(wb, ws, "Registros");
+            XLSX.writeFile(wb, `Reporte_QR_${new Date().toISOString().slice(0,10)}.xlsx`);
         }
     </script>
 </body>
