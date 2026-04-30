@@ -3,96 +3,116 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Escáner QR con Validación de Duplicados</title>
+    <title>Escáner QR con Guardado Manual</title>
     <script src="https://unpkg.com/html5-qrcode"></script>
     <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
     <style>
-        body { font-family: 'Segoe UI', Tahoma, sans-serif; background: #f8f9fa; display: flex; flex-direction: column; align-items: center; padding: 20px; margin: 0; }
-        h2 { color: #202124; margin-bottom: 15px; font-size: 1.4rem; text-align: center; }
-        #reader { width: 100%; max-width: 400px; border-radius: 12px; overflow: hidden; box-shadow: 0 4px 12px rgba(0,0,0,0.1); background: white; }
-        .controls { margin: 20px 0; width: 100%; max-width: 400px; display: flex; flex-direction: column; gap: 10px; }
-        button { background: #1a73e8; color: white; border: none; padding: 14px; border-radius: 8px; font-weight: bold; cursor: pointer; font-size: 1rem; width: 100%; }
-        button.btn-excel { background: #1e7e34; }
-        #log { width: 100%; max-width: 400px; background: white; border-radius: 10px; padding: 10px; box-shadow: inset 0 2px 4px rgba(0,0,0,0.05); max-height: 250px; overflow-y: auto; }
-        .row { border-bottom: 1px solid #f1f1f1; padding: 10px; font-size: 0.85rem; display: flex; justify-content: space-between; }
-        .duplicate { color: #d93025; font-weight: bold; }
+        body { font-family: 'Segoe UI', Tahoma, sans-serif; background: #f4f7f6; display: flex; flex-direction: column; align-items: center; padding: 20px; margin: 0; }
+        #reader { width: 100%; max-width: 400px; border-radius: 15px; overflow: hidden; box-shadow: 0 4px 15px rgba(0,0,0,0.1); background: white; }
+        
+        /* Contenedor de validación */
+        .preview-box { width: 100%; max-width: 370px; background: white; margin-top: 15px; padding: 15px; border-radius: 12px; border: 2px solid #1a73e8; text-align: center; }
+        .preview-text { font-weight: bold; color: #1a73e8; word-break: break-all; margin-bottom: 10px; display: block; }
+        
+        .btn-save { background: #1a73e8; color: white; border: none; padding: 15px; border-radius: 8px; width: 100%; font-weight: bold; cursor: pointer; font-size: 1.1rem; }
+        .btn-save:disabled { background: #ccc; cursor: not-allowed; }
+        
+        .btn-excel { background: #1e7e34; color: white; border: none; padding: 12px; border-radius: 8px; margin-top: 20px; width: 100%; max-width: 400px; font-weight: bold; cursor: pointer; }
+        
+        #log { width: 100%; max-width: 400px; margin-top: 20px; background: #fff; border-radius: 10px; padding: 10px; }
+        .row { border-bottom: 1px solid #eee; padding: 8px; font-size: 0.85rem; display: flex; justify-content: space-between; }
     </style>
 </head>
 <body>
 
-    <h2>Control de Acceso QR</h2>
+    <h2 style="color: #333;">Registro Manual de QR</h2>
     
     <div id="reader"></div>
 
-    <div class="controls">
-        <button class="btn-excel" onclick="exportToExcel()">Descargar Excel (.xlsx)</button>
-        <button style="background: #6c757d;" onclick="location.reload()">Limpiar Sesión / Nueva Lista</button>
+    <!-- Panel de Confirmación -->
+    <div class="preview-box">
+        <span style="font-size: 0.9rem; color: #666;">Código detectado:</span>
+        <span id="preview-data" class="preview-text">Esperando QR...</span>
+        <button id="save-btn" class="btn-save" onclick="confirmarRegistro()" disabled>GUARDAR REGISTRO</button>
     </div>
 
+    <button class="btn-excel" onclick="exportToExcel()">Descargar Reporte Excel</button>
+
     <div id="log">
-        <div style="font-weight: bold; padding: 5px; color: #5f6368;">Registros realizados:</div>
+        <div style="font-weight: bold; margin-bottom: 5px;">Lista para Excel:</div>
+        <div id="entries"></div>
     </div>
 
     <script>
         let capturedData = [];
-        let isProcessing = false; // Bloqueo para que no salgan mil ventanas de confirmación
+        let currentScan = null;
         const html5QrCode = new Html5Qrcode("reader");
+        const previewText = document.getElementById('preview-data');
+        const saveBtn = document.getElementById('save-btn');
 
         const onScanSuccess = (decodedText) => {
-            if (isProcessing) return; // Si hay una confirmación abierta, no hacer nada
-
-            // 1. Verificar si el contenido YA existe en el array
-            const yaExiste = capturedData.some(item => item.Contenido === decodedText);
-
-            if (yaExiste) {
-                isProcessing = true;
-                // 2. Solicitar autorización manual
-                const autorizar = confirm(`ESTA CREDENCIAL YA FUE REGISTRADA:\n\n"${decodedText}"\n\n¿Deseas registrarla de nuevo?`);
+            // Si el código detectado es diferente al anterior, lo mostramos para confirmar
+            if (currentScan !== decodedText) {
+                currentScan = decodedText;
+                previewText.innerText = decodedText;
+                saveBtn.disabled = false; // Habilitar botón de guardado
                 
-                if (!autorizar) {
-                    isProcessing = false;
-                    return; // Si el usuario cancela, no se guarda nada
-                }
+                // Vibración leve para indicar que "leyó" pero no ha guardado
+                if (navigator.vibrate) navigator.vibrate(50);
+            }
+        };
+
+        function confirmarRegistro() {
+            if (!currentScan) return;
+
+            // Revisar si ya existe en la lista de esta sesión
+            const yaExiste = capturedData.some(item => item.Contenido === currentScan);
+            
+            if (yaExiste) {
+                const reintentar = confirm("Esta credencial ya está en la lista. ¿Deseas guardarla de nuevo?");
+                if (!reintentar) return;
             }
 
-            // 3. Registrar la información
             const ahora = new Date();
             const nuevoRegistro = {
                 Hora: ahora.toLocaleTimeString(),
                 Fecha: ahora.toLocaleDateString(),
-                Contenido: decodedText
+                Contenido: currentScan
             };
 
+            // Guardar en el array
             capturedData.unshift(nuevoRegistro);
-            agregarALog(nuevoRegistro);
             
-            if (navigator.vibrate) navigator.vibrate(100);
-            
-            // Pequeña pausa para evitar lecturas accidentales inmediatas
-            isProcessing = true;
-            setTimeout(() => { isProcessing = false; }, 2000);
-        };
-
-        function agregarALog(dato) {
-            const logDiv = document.getElementById('log');
+            // Mostrar en la lista visual
+            const entriesDiv = document.getElementById('entries');
             const item = document.createElement('div');
             item.className = 'row';
-            item.innerHTML = `<span>${dato.Contenido}</span><span style="color:#888">${dato.Hora}</span>`;
-            logDiv.insertBefore(item, logDiv.children[1]);
+            item.innerHTML = `<span>${nuevoRegistro.Contenido}</span> <span style="color:#888">${nuevoRegistro.Hora}</span>`;
+            entriesDiv.prepend(item);
+
+            // Feedback de éxito y reset
+            alert("¡Guardado correctamente!");
+            resetPreview();
+        }
+
+        function resetPreview() {
+            currentScan = null;
+            previewText.innerText = "Esperando QR...";
+            saveBtn.disabled = true;
         }
 
         html5QrCode.start(
             { facingMode: "environment" }, 
-            { fps: 15, qrbox: { width: 250, height: 250 } }, 
+            { fps: 20, qrbox: { width: 250, height: 250 } }, 
             onScanSuccess
         );
 
         function exportToExcel() {
-            if (capturedData.length === 0) return alert("No hay datos.");
+            if (capturedData.length === 0) return alert("No hay datos guardados.");
             const ws = XLSX.utils.json_to_sheet(capturedData);
             const wb = XLSX.utils.book_new();
             XLSX.utils.book_append_sheet(wb, ws, "Registros");
-            XLSX.writeFile(wb, `Reporte_QR_${new Date().toISOString().slice(0,10)}.xlsx`);
+            XLSX.writeFile(wb, `Reporte_Obra_${new Date().toISOString().slice(0,10)}.xlsx`);
         }
     </script>
 </body>
